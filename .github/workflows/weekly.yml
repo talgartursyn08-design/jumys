@@ -1,0 +1,28 @@
+name: Апталық ЗП есебі
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Кітапханаларды орнату
+        run: pip install requests
+
+      - name: Ботты іске қосу
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          sed -i "s/МҰНДА_ТОКЕНДІ_ЖАЗ/$TELEGRAM_TOKEN/" bot.py
+          sed -i "s/МҰНДА_CHAT_ID_ЖАЗ/$TELEGRAM_CHAT_ID/" bot.py
+          python bot.py
