@@ -1,10 +1,10 @@
 """
-ЗП Бот v6 — RSS + дұрыс сан сүзгісі
+ЗП Бот v7 — RSS + Claude AI парсинг
 """
 
 import requests
 import time
-import re
+import json
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 
@@ -67,33 +67,15 @@ POSITIONS = [
     "Менеджер по уюту",
 ]
 
-HEADERS = {
+RSS_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept-Language": "ru-RU,ru;q=0.9",
     "Referer": "https://hh.ru/",
 }
 
 
-def extract_salary(title):
-    """Тек тақырыптан ЗП алу: 'Бухгалтер (300 000 – 500 000 тг)'"""
-    # ЗП тақырыпта болса ғана — description-дан емес
-    # Үлгі: "300 000" немесе "300 000 – 500 000" немесе "от 300 000"
-    title = title.replace("\xa0", " ").replace(" ", "")
-    
-    # Екі санды іздеу: 200000-9999999 аралығы
-    pattern = r"(\d{6,7})"
-    nums = re.findall(pattern, title)
-    nums = [int(n) for n in nums if 100000 <= int(n) <= 9999999]
-    
-    if len(nums) >= 2:
-        return (nums[0] + nums[1]) / 2
-    elif len(nums) == 1:
-        return float(nums[0])
-    return None
-
-
-def get_avg_salary_rss(position, area_id):
-    salaries = []
+def get_rss_titles(position, area_id):
+    """RSS-тан вакансия тақырыптарын алу"""
     try:
         r = requests.get(
             "https://hh.ru/search/vacancy/rss",
@@ -103,30 +85,75 @@ def get_avg_salary_rss(position, area_id):
                 "per_page": 50,
                 "only_with_salary": "true",
             },
-            headers=HEADERS,
+            headers=RSS_HEADERS,
             timeout=15,
         )
-        print(f"  RSS {r.status_code}")
         if r.status_code != 200:
-            return None
-
+            return []
         root = ET.fromstring(r.content)
-        items = root.findall(".//item")
-        print(f"  items={len(items)}")
-
-        for item in items:
-            title = item.findtext("title", "") or ""
-            sal = extract_salary(title)
-            if sal:
-                salaries.append(sal)
-
+        titles = []
+        for item in root.findall(".//item"):
+            t = item.findtext("title", "") or ""
+            if t:
+                titles.append(t.strip())
+        print(f"  RSS {r.status_code}, titles={len(titles)}")
+        return titles
     except Exception as e:
-        print(f"  Error: {e}")
-        return None
+        print(f"  RSS error: {e}")
+        return []
 
-    avg = round(sum(salaries) / len(salaries)) if salaries else None
-    print(f"  -> {len(salaries)} вак. avg={avg}")
-    return avg
+
+def ai_extract_salaries(titles):
+    if not titles:
+        return []
+
+    titles_text = "\n".join(f"- {t}" for t in titles[:40])
+
+    prompt = f"""Мына вакансия тақырыптарынан жалақы сомаларын тауып, тізім ретінде қайтар.
+
+Тақырыптар:
+{titles_text}
+
+Ереже:
+- Тек тенге (₸, тг, KZT) немесе рубль (руб, ₽) сомаларын ал
+- Рубльді теңгеге айналдыр: 1 руб = 5.5 теңге
+- Егер "от X до Y" болса: (X+Y)/2 ал
+- Егер тек "от X" болса: X ал
+- 80000-ден төмен сандарды өткіз
+- Тек сандарды қайтар, JSON array форматында
+- Мысал: [350000, 500000, 280000]
+- Басқа ештеңе жазба, тек JSON"""
+
+    try:
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"  AI error: {r.status_code} {r.text}")
+            return []
+
+        text = r.json()["choices"][0]["message"]["content"].strip()
+        match = __import__("re").search(r"\[[\d,\s]+\]", text)
+        if match:
+            salaries = json.loads(match.group())
+            print(f"  AI -> {len(salaries)} жалақы")
+            return salaries
+        return []
+    except Exception as e:
+        print(f"  AI error: {e}")
+        return []
 
 
 def fmt(amount):
@@ -157,9 +184,10 @@ def send_telegram(text):
 
 def main():
     today = datetime.now()
-    week_ago = today - timedelta(days=7)
-    date_range = f"{week_ago.strftime('%d.%m.%Y')}–{today.strftime('%d.%m.%Y')}"
-    lines = [f"📊 *Апталық орташа жалақы есебі*", f"_{date_range}_", ""]
+    month_ago = today - timedelta(days=30)
+    date_range = f"{month_ago.strftime('%d.%m.%Y')}–{today.strftime('%d.%m.%Y')}"
+    lines = [f"📊 *Айлық орташа жалақы есебі*", f"_{date_range}_", ""]
+
     total = len(POSITIONS) * len(CITIES)
     done = 0
 
@@ -167,10 +195,12 @@ def main():
         city_results = {}
         for city_name, area_id in CITIES.items():
             print(f"[{done+1}/{total}] {position} / {city_name}")
-            avg = get_avg_salary_rss(position, area_id)
+            titles = get_rss_titles(position, area_id)
+            salaries = ai_extract_salaries(titles)
+            avg = round(sum(salaries) / len(salaries)) if salaries else None
             city_results[city_name] = avg
             done += 1
-            time.sleep(0.3)
+            time.sleep(0.5)
 
         if all(v is None for v in city_results.values()):
             continue
