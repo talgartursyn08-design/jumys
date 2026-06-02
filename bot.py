@@ -1,5 +1,5 @@
 """
-ЗП Бот — hh.kz бойынша апталық орташа жалақы есебі
+ЗП Бот v3 — hh.ru API (Казахстан)
 """
 
 import requests
@@ -66,12 +66,22 @@ POSITIONS = [
     "Менеджер административный",
 ]
 
+HEADERS = {
+    "User-Agent": "api-test-agent",
+    "Accept": "application/json",
+    "Accept-Language": "ru-RU",
+    "HH-User-Agent": "SalaryTracker/1.0 (salary@example.com)",
+}
+
 
 def get_avg_salary(position, area_id):
     salaries = []
-    for page in range(3):
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    for page in range(5):
         try:
-            r = requests.get(
+            r = session.get(
                 "https://api.hh.ru/vacancies",
                 params={
                     "text": position,
@@ -79,20 +89,24 @@ def get_avg_salary(position, area_id):
                     "per_page": 100,
                     "page": page,
                     "only_with_salary": False,
+                    "search_field": "name",
                 },
-                headers={"User-Agent": "Mozilla/5.0 SalaryBot/2.0"},
-                timeout=10,
+                timeout=15,
             )
+            print(f"  API status: {r.status_code} for {position}/{area_id} page {page}")
             if r.status_code != 200:
                 break
-            items = r.json().get("items", [])
+            data = r.json()
+            items = data.get("items", [])
             if not items:
                 break
             for v in items:
                 s = v.get("salary")
                 if not s:
                     continue
-                f, t, cur = s.get("from"), s.get("to"), s.get("currency", "KZT")
+                f = s.get("from")
+                t = s.get("to")
+                cur = s.get("currency", "KZT")
                 rate = {"KZT": 1, "RUR": 5.5, "USD": 470, "EUR": 515}.get(cur, 1)
                 if f and t:
                     salaries.append((f + t) / 2 * rate)
@@ -100,16 +114,42 @@ def get_avg_salary(position, area_id):
                     salaries.append(f * rate)
                 elif t:
                     salaries.append(t * rate)
-            time.sleep(0.2)
-        except Exception:
+            if page >= data.get("pages", 1) - 1:
+                break
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  Error: {e}")
             break
-    return round(sum(salaries) / len(salaries)) if salaries else None
+
+    avg = round(sum(salaries) / len(salaries)) if salaries else None
+    print(f"  -> {len(salaries)} вакансия с ЗП, avg={avg}")
+    return avg
 
 
 def fmt(amount):
     if amount is None:
         return "деректер жоқ"
     return f"{amount:,.0f}".replace(",", " ") + " ₸"
+
+
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    chunks = []
+    while len(text) > 4000:
+        i = text.rfind("\n", 0, 4000)
+        if i == -1:
+            i = 4000
+        chunks.append(text[:i])
+        text = text[i:].lstrip()
+    chunks.append(text)
+    for chunk in chunks:
+        r = requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": chunk,
+            "parse_mode": "Markdown",
+        }, timeout=15)
+        print("Telegram:", r.status_code, r.json().get("ok"))
+        time.sleep(0.5)
 
 
 def main():
@@ -125,10 +165,10 @@ def main():
     for position in POSITIONS:
         city_results = {}
         for city_name, area_id in CITIES.items():
+            print(f"[{done+1}/{total}] {position} / {city_name}")
             avg = get_avg_salary(position, area_id)
             city_results[city_name] = avg
             done += 1
-            print(f"[{done}/{total}] {position} / {city_name}: {avg}")
 
         if all(v is None for v in city_results.values()):
             continue
@@ -139,27 +179,7 @@ def main():
         lines.append("")
 
     lines.append("_hh.kz деректері негізінде_")
-    text = "\n".join(lines)
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    chunks = []
-    while len(text) > 4000:
-        i = text.rfind("\n", 0, 4000)
-        if i == -1:
-            i = 4000
-        chunks.append(text[:i])
-        text = text[i:].lstrip()
-    chunks.append(text)
-
-    for chunk in chunks:
-        r = requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk,
-            "parse_mode": "Markdown",
-        }, timeout=15)
-        print("Telegram:", r.status_code, r.json().get("ok"))
-        time.sleep(0.5)
-
+    send_telegram("\n".join(lines))
     print("Дайын!")
 
 
