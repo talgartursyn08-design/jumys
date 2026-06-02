@@ -1,12 +1,10 @@
 """
-ЗП Бот v4 — hh.ru RSS арқылы
+ЗП Бот v5 — hh.ru API, дұрыс парсинг
 """
 
 import requests
 import time
-import re
 from datetime import datetime, timedelta
-import xml.etree.ElementTree as ET
 
 TELEGRAM_TOKEN = "МҰНДА_ТОКЕНДІ_ЖАЗ"
 TELEGRAM_CHAT_ID = "МҰНДА_CHAT_ID_ЖАЗ"
@@ -18,81 +16,121 @@ CITIES = {
 }
 
 POSITIONS = [
-    "CTO", "backend разработчик", "frontend разработчик",
-    "Исполнительный директор", "Операционный директор",
-    "Операционный менеджер", "Финансовый директор",
-    "Бухгалтер", "Помощник бухгалтера", "Юрист",
-    "PR менеджер", "Маркетолог", "Таргетолог",
-    "Performance manager", "SMM менеджер", "Копирайтер",
-    "Графический дизайнер", "Видеограф", "Оператор монтажер",
-    "Product manager", "Product Assistant", "Методист",
-    "Project manager", "Контент менеджер", "Тимлид",
-    "Редактор", "Куратор", "Менеджер по качеству",
-    "Менеджер по госзакупкам", "B2G менеджер",
-    "Руководитель отдела продаж", "Менеджер по продажам",
-    "Сервис менеджер", "HR директор", "HR менеджер", "Рекрутер",
+    "CTO Chief Technical Officer",
+    "backend разработчик",
+    "frontend разработчик",
+    "Исполнительный директор",
+    "Операционный директор",
+    "Операционный менеджер",
+    "Финансовый директор",
+    "Бухгалтер",
+    "Помощник бухгалтера",
+    "Руководитель юридического отдела",
+    "Юрист",
+    "PR менеджер",
+    "Маркетолог",
+    "Таргетолог",
+    "Performance manager",
+    "SMM менеджер",
+    "Копирайтер",
+    "Графический дизайнер",
+    "Видеограф",
+    "Оператор монтажер",
+    "Руководитель отдела сервиса",
+    "Руководитель по развитию бизнеса",
+    "Product manager",
+    "Product Assistant",
+    "Руководитель отдела продукта",
+    "Методист",
+    "Project manager",
+    "Контент менеджер",
+    "Тимлид",
+    "Редактор",
+    "Куратор",
+    "Операционный куратор",
+    "Руководитель отдела контроля качества",
+    "Менеджер по возврату",
+    "Менеджер по качеству",
+    "Менеджер по госзакупкам",
+    "B2G менеджер",
+    "Менеджер по лидогенерации",
+    "Руководитель отдела продаж",
+    "Менеджер по продажам",
+    "Сервис менеджер",
+    "Хантер",
+    "HR директор",
+    "HR менеджер",
+    "Рекрутер",
+    "Руководитель АХО",
+    "Менеджер по уюту",
 ]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+    "Accept": "application/json",
     "Accept-Language": "ru-RU,ru;q=0.9",
-    "Referer": "https://hh.ru/",
 }
 
 
-def parse_salary_from_text(text):
-    if not text:
-        return None, None
-    text = text.replace("\xa0", " ").replace(" ", "")
-    nums = re.findall(r"\d{4,7}", text)
-    nums = [int(n) for n in nums if 10000 <= int(n) <= 10000000]
-    if len(nums) >= 2:
-        return nums[0], nums[1]
-    elif len(nums) == 1:
-        return nums[0], None
-    return None, None
-
-
-def get_avg_salary_rss(position, area_id):
+def get_avg_salary(position, area_id):
     salaries = []
     try:
-        r = requests.get(
-            "https://hh.ru/search/vacancy/rss",
-            params={
-                "text": position,
-                "area": area_id,
-                "per_page": 50,
-                "only_with_salary": "false",
-            },
-            headers=HEADERS,
-            timeout=15,
-        )
-        print(f"  RSS status: {r.status_code}")
-        if r.status_code != 200:
-            return None
+        for page in range(5):
+            r = requests.get(
+                "https://api.hh.ru/vacancies",
+                params={
+                    "text": position,
+                    "area": area_id,
+                    "per_page": 100,
+                    "page": page,
+                    "only_with_salary": False,
+                    "currency": "KZT",
+                },
+                headers=HEADERS,
+                timeout=15,
+            )
+            print(f"  status={r.status_code} page={page}")
+            if r.status_code != 200:
+                break
+            data = r.json()
+            items = data.get("items", [])
+            if not items:
+                break
 
-        root = ET.fromstring(r.content)
-        items = root.findall(".//item")
-        print(f"  RSS items: {len(items)}")
+            for v in items:
+                s = v.get("salary")
+                if not s:
+                    continue
+                # Тек нақты ЗП өрістерін алу
+                sal_from = s.get("from")
+                sal_to = s.get("to")
+                cur = s.get("currency", "KZT")
+                # Тек KZT, RUR, USD қабылдаймыз
+                if cur not in ("KZT", "RUR", "USD", "EUR"):
+                    continue
+                rate = {"KZT": 1, "RUR": 5.5, "USD": 470, "EUR": 515}[cur]
+                # Минимум 50,000 ₸ болу керек (спам сүзгі)
+                if sal_from and sal_from * rate < 50000:
+                    sal_from = None
+                if sal_to and sal_to * rate < 50000:
+                    sal_to = None
 
-        for item in items:
-            desc = item.findtext("description", "") or ""
-            title = item.findtext("title", "") or ""
-            sal_from, sal_to = parse_salary_from_text(title + " " + desc)
-            if sal_from and sal_to:
-                salaries.append((sal_from + sal_to) / 2)
-            elif sal_from:
-                salaries.append(sal_from)
-            elif sal_to:
-                salaries.append(sal_to)
+                if sal_from and sal_to:
+                    salaries.append((sal_from + sal_to) / 2 * rate)
+                elif sal_from:
+                    salaries.append(sal_from * rate)
+                elif sal_to:
+                    salaries.append(sal_to * rate)
+
+            if page >= data.get("pages", 1) - 1:
+                break
+            time.sleep(0.3)
 
     except Exception as e:
-        print(f"  RSS Error: {e}")
-        return None
+        print(f"  Error: {e}")
 
     avg = round(sum(salaries) / len(salaries)) if salaries else None
-    print(f"  -> {len(salaries)} вакансия с ЗП, avg={avg}")
+    print(f"  -> {len(salaries)} вак. avg={avg}")
     return avg
 
 
@@ -134,10 +172,9 @@ def main():
         city_results = {}
         for city_name, area_id in CITIES.items():
             print(f"[{done+1}/{total}] {position} / {city_name}")
-            avg = get_avg_salary_rss(position, area_id)
+            avg = get_avg_salary(position, area_id)
             city_results[city_name] = avg
             done += 1
-            time.sleep(0.5)
 
         if all(v is None for v in city_results.values()):
             continue
