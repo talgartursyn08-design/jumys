@@ -16,7 +16,8 @@ jobs:
           python-version: "3.11"
 
       - name: Кітапханаларды орнату
-        run: pip install requests
+        run: pip install requests requests[socks] PySocks
+      
 
       - name: Ботты іске қосу
         env:
