@@ -83,7 +83,7 @@ def get_rss_titles(position, area_id):
                 "text": position,
                 "area": area_id,
                 "per_page": 50,
-                "only_with_salary": "true",
+                "only_with_salary": "false",
             },
             headers=RSS_HEADERS,
             timeout=15,
