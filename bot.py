@@ -87,7 +87,7 @@ def get_avg_salary(position: str, area_id: int) -> int | None:
                 "text": position,
                 "area": area_id,
                 "per_page": 100,
-                "only_with_salary": True,
+                "only_with_salary": False,
                 "currency": "KZT",
             },
             headers={"User-Agent": "SalaryBot/1.0 (talgar.salary@gmail.com)"},
