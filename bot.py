@@ -89,7 +89,6 @@ def get_avg_salary(position, area_id):
                     "per_page": 100,
                     "page": page,
                     "only_with_salary": False,
-                    "search_field": "name",
                 },
                 timeout=15,
             )
