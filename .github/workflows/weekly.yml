@@ -23,6 +23,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           sed -i "s/МҰНДА_ТОКЕНДІ_ЖАЗ/$TELEGRAM_TOKEN/" bot.py
           sed -i "s/МҰНДА_CHAT_ID_ЖАЗ/$TELEGRAM_CHAT_ID/" bot.py
